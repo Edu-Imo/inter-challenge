@@ -1,0 +1,336 @@
+// This pipeline will build a docker image of the inter-challenge-app and publish to docker hub
+//
+//
+pipeline {
+    agent any
+
+    //use the xxx docker container
+    /*agent {
+        docker {
+            //image 'node:6-alpine'
+            image 'node:14.15.1-buster'
+            args '-p 3010:3010'
+        }
+    }*/
+
+    environment {
+        CI = 'true'        
+        def APP2 = readJSON file: 'package.json'
+        def APP_NAME2 = "${APP2.name}"
+        //def APP_VERSION2 = "${APP2.version}"       
+        //APP_NAME1 = $(cat package.json | grep name | head -1 | awk -F: '{ print $2 }' | sed 's/[\",]//g')
+        //APP_VERSION1 = $(cat package.json | grep version | head -1 | awk -F: '{ print $2 }' | sed 's/[\",]//g')
+        SHORT_COMMIT_ID = GIT_COMMIT.take(9)
+        HUB_USER = "qui3tst0rm"
+        REPO_NAME = "${APP2.NAME2}"
+    }
+
+    tools {nodejs 'node14.15.1'}
+    
+    stages {
+        // install dependencies //
+        stage('install-dep') {
+            steps{
+                script {
+                    echo 'install dependencies'
+                    sh '''
+                    set -e
+                    npm install
+                    set +e
+                    '''
+                }
+            }
+            post {
+                /*always {
+                    script {
+                        echo 'stage: install-dep post stage always'
+                    }
+                }*/
+                // send slack notification for install dev dependency success
+                /*success {
+                    slackSend (
+                        color: '#26ff00' //green
+                        message: "[APP]: ${APP_NAME2.toUpperCase()}\n [INSTALL-DEV-DEPEND]:Success\n [JOB]:'${env.JOB_NAME}\n [BUILD NO]:${env.BUILD_NUMBER}'"
+                    )
+                }*/
+                // send slack notification on  install-dev-dependency failure
+                failure {
+                    slackSend (
+                        color: '#ff002a', //red
+                        message: "[APP]: ${APP_NAME2.toUpperCase()}\n [INSTALL-DEPEND]:Failed\n [JOB]:'${env.JOB_NAME}\n [BUILD NO]:${env.BUILD_NUMBER}'",
+                        //message: "[APP]: ${APP_NAME2.toUpperCase()}\n [INSTALL-DEV-DEPEND]:Failed\n [JOB]:'${env.JOB_NAME}\n [BUILD NO]:${env.BUILD_NUMBER}'",
+                    )
+                }
+            }
+        }
+        // run unit tests //
+        // project currently contains no unit tests therefore commented out for now 
+        /*stage('unit-test') {
+            steps{
+                script {
+                    echo 'slackSend run unit test'
+                    sh '''
+                    set +e
+                    cp /var/lib/jenkins/envFiles/syarpa/referral/dev/.env .
+                    npm test
+                    set -e
+                    '''
+                }
+            }
+            post {
+                //send slack notification for unit-test execution success
+                always {
+                    script {
+                        echo 'running unit test stage!!!'
+                    } 
+                }
+                //send slack notification for npm test success
+                success {
+                    slackSend (
+                        color: '#26ff00', //green
+                        message: message: "[APP]: ${APP_NAME2.toUpperCase()}\n [UNIT-TEST]:Success\n [JOB]:'${env.JOB_NAME}\n [BUILD NO]:${env.BUILD_NUMBER}'",
+                    )                    
+                }
+                failure {
+                    slackSend (
+                        color: '#ff002a', //red
+                        message: "[APP]: ${APP_NAME2.toUpperCase()}\n [UNIT-TEST]:Failed\n [JOB]:'${env.JOB_NAME}\n [BUILD NO]:${env.BUILD_NUMBER}'",
+                    )
+                }
+            }
+        }*/
+
+        // build docker image //
+        stage('build-image') {
+            when {
+                expression {
+                    currentBuild.result == null || currentBuild.result == 'SUCCESS'
+                }   
+            }
+            steps {
+                script {
+                    //package = readJSON file: package.json
+                    echo 'building image'
+                }
+                sh """
+                set -e
+                docker build -t ${APP_NAME2}:latest .
+                set +e
+                """
+            }
+            post {
+                /*always {
+                    script {
+                        echo 'slackSend building docker image'
+                    }
+                }*/
+                // send slack notification on docker build success
+                /*success {
+                    script {
+                        echo 'slackSend docker build success!!!'
+                    }
+                    slackSend (
+                        color: '#26ff00', //green
+                        message: "[APP]: ${APP_NAME2.toUpperCase()}\n [DOCKER-BUILD]:Success\n [JOB]:'${env.JOB_NAME}\n [BUILD NO]:${env.BUILD_NUMBER}'",
+                    )
+                }*/
+                // send slack notification on docker build failure
+                failure {
+                    script {
+                        echo 'slackSend docker build failed!!!'
+                    }
+                    slackSend (
+                        color: '#ff002a', //red
+                        message: "[APP]: ${APP_NAME2.toUpperCase()}\n [DOCKER-BUILD]:Failed\n [JOB]:'${env.JOB_NAME}\n [BUILD NO]:${env.BUILD_NUMBER}'",
+                    )
+                }                
+            }
+        }
+
+        // Run a security scan on the image with docker scan, docker scan runs on the snyk engine //
+        // The Vulnerability scanning feature doesn’t work with Alpine distributions //
+
+        stage('security-scan') {
+            when {
+                expression {
+                    currentBuild.result == null || currentBuild.result == 'Success'                    
+                }
+            }
+            steps {
+                script {
+                    echo 'run security scan with Snyk'                    
+                }
+                withCredentials([string(credentialsId: 'SNYK_TOKEN', variable: 'SNYK_AUTH_TOKEN')]) {
+                    sh """
+                    set +e
+                    ('docker scan --login --token $SNYK_AUTH_TOKEN')
+                    docker scan ${APP_NAME2}:latest
+                    set -e
+                    """
+                    // Get a detailed scan report about a Docker image by providing the Dockerfile used to create the image
+                    //sh ('docker scan --file Dockerfile ${APP_NAME2}:latest')                    
+                }                
+            }
+            post {
+                always {
+                    script {
+                        echo 'slackSend run security scan'
+                    }
+
+                }
+                success {
+                    script {
+                        echo 'docker scan passed'
+                    }
+                    slackSend (
+                        color: '#26ff00', //green
+                        message: "[APP]: ${APP_NAME2.toUpperCase()}\n [DOCKER-SCAN]:Passed\n [JOB]:'${env.JOB_NAME}\n [BUILD NO]:${env.BUILD_NUMBER}'",
+                    )
+                }
+                failure {
+                    script {
+                        echo 'docker scan failed'
+                    }
+                    slackSend (
+                        color: '#ff002a', //red
+                        message: "[APP]: ${APP_NAME2.toUpperCase()}\n [DOCKER-SCAN]:Failed\n [JOB]:'${env.JOB_NAME}\n [BUILD NO]:${env.BUILD_NUMBER}'",
+                    )
+                }
+            }
+        }
+               
+        // tag the image just created //
+        stage('tag-image') {
+            when {
+                expression {
+                    currentBuild.result == null || currentBuild.result == 'SUCCESS'
+                }
+            }
+            steps {
+                script {
+                    //package = readJSON file: package.json
+                    echo 'tagging image'
+                }
+                //sh "docker tag ${APP_NAME2}:latest ${REPO}/${APP_NAME2}:${APP_VERSION2}"
+                sh """
+                set -e
+                docker tag ${APP_NAME2}:latest ${HUB_USER}/${APP_NAME2}:${SHORT_COMMIT_ID}
+                set +e
+                """
+            }
+            post {
+                /*always {
+                    script {
+                        echo 'tag docker image'
+                    }
+                }*/
+                /*success {
+                    script {
+                        echo 'slackSend tag image stage success'
+                    }
+                    slackSend (
+                        color: '#26ff00', //green
+                        message: "[APP]: ${APP_NAME2.toUpperCase()}\n [TAG-IMAGE]:Success\n [JOB]:'${env.JOB_NAME}\n [Build No]:${env.BUILD_NUMBER}'"
+                    )
+                }*/
+                failure {
+                    script {
+                        echo 'tag image stage failed'
+                    }
+                    slackSend (
+                        color: '#ff002a', //red
+                        message: "[APP]: ${APP_NAME2.toUpperCase()}\n [TAG-IMAGE]:Failure\n [JOB]:'${env.JOB_NAME}\n [Build No]:${env.BUILD_NUMBER}'"
+                    )
+                }
+            }
+        }
+
+        // Publish image to repository//
+        stage('push image') {
+            when {
+                expression {
+                    currentBuild.result == null || currentBuild.result == 'SUCCESS'
+                }
+            }
+            steps {
+                script {
+                    echo 'slackSend pushing image to repo'
+                }
+                withCredentials([usernamePassword(credentialsId: 'DOCKER_CREDS', passwordVariable: 'DOCKER_HUB_PWD', usernameVariable: 'DOCKER_HUB_USER')]) {
+                    //considered insecure fixed by reading the pwd and passing to the docker login cmd using STDIN                    
+                    sh ('docker login -u $DOCKER_HUB_USER -p $DOCKER_HUB_PWD')                 
+                    sh "docker push $HUB_USER/$APP_NAME2:${env.SHORT_COMMIT_ID}"
+                    //sh 'docker login --username $DOCKER_HUB_USER --password-stdin < $DOCKER_HUB_PWD'
+                    //sh ('echo "$DOCKER_HUB_PWD" | docker login -u $DOCKER_HUB_USER --password-stdin')                    
+                }
+            }
+            post {
+                /*always {
+                    script {
+                        echo 'push docker image'
+                    }
+                }*/
+                success {
+                    script {
+                        echo 'slackSend docker image push success'
+                    }
+                    slackSend (
+                        color: '#26ff00', //green
+                        message: "[APP]: ${APP_NAME2.toUpperCase()}\n [PUSH-IMAGE]:Success\n [JOB]:'${env.JOB_NAME}\n [Build No]:${env.BUILD_NUMBER}'"
+                    )
+                }
+                failure {
+                    script {
+                        echo 'slackSend docker image push failed'
+                    }
+                    slackSend (
+                        color: '#ff002a', //red
+                        message: "[APP]: ${APP_NAME2.toUpperCase()}\n [PUSH-IMAGE]: Failure\n [JOB]:'${env.JOB_NAME}\n [Build No]:${env.BUILD_NUMBER}'"
+                    )
+                }
+            }
+        }
+        // delete image to cleanup Jenkins workspace/server space //
+        stage('remove-unused-image') {
+            when {
+                expression {
+                    currentBuild.result == null || currentBuild.result == 'SUCCESS'
+                }
+            }
+            steps {
+                script {
+                    echo 'removing docker image'
+                }
+                sh """
+                set -e
+                docker rmi ${HUB_USER}/${APP_NAME2}:${env.SHORT_COMMIT_ID}
+                docker rmi ${APP_NAME2}:latest
+                set +e
+                """
+            }
+            post {
+                /*always {
+
+                }*/
+                /*success {
+                    script {
+                        echo 'slackSend cleanup workspace: remove docker image success'
+                    }
+                    slackSend (
+                        color: '#26ff00', //green
+                        message: "[APP]: ${APP_NAME2.toUpperCase()}\n [CLEANUP]:Success\n [JOB]:'${env.JOB_NAME}\n [Build No]:${env.BUILD_NUMBER}'"
+                    )
+                }*/
+                failure {
+                    script {
+                        echo 'slackSend cleanup workspace: remove docker image success'
+                    }
+                    slackSend (
+                        color: '#ff002a', //red
+                        message: "[APP]: ${APP_NAME2.toUpperCase()}\n [CLEANUP]:Failed\n [JOB]:'${env.JOB_NAME}\n [Build No]:${env.BUILD_NUMBER}'"
+                    )
+                }
+            }
+        }
+    }
+}
