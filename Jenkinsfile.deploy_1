@@ -1,0 +1,191 @@
+// Description: when triggered this pipeline will deploy the latest version of the syarpa-web docker image to the dev or production env based on branch.
+pipeline {
+    //agent any
+
+    //use the xxx docker container
+    /*agent {
+        docker {
+            //image 'node:6-alpine'
+            image 'node:14.15.1-buster'
+            args '-p 3000:3000'
+        }
+    }*/
+    
+    environment {
+        CI = 'true'       
+        def APP2 = readJSON file: 'package.json'
+        def APP_NAME2 = "${APP2.name}"
+        def APP_VERSION2 = "${APP2.version}"       
+        //APP_NAME1 = $(cat package.json | grep name | head -1 | awk -F: '{ print $2 }' | sed 's/[\",]//g')
+        //APP_VERSION1 = $(cat package.json | grep version | head -1 | awk -F: '{ print $2 }' | sed 's/[\",]//g')
+        SHORT_COMMIT_ID = GIT_COMMIT.take(9)
+        HUB_USER = "qui3tst0rm"
+        REPO_NAME = "${APP2.NAME2}"
+        PORT = 3000
+    }
+    
+    stages {
+        // if branch is master prompt for approval to prod environment
+        stage('prompt-for-approval-prod-deploy') {
+            when {
+                branch 'master'
+            }
+            steps {
+                script {
+                    echo 'running prompt for approval prod deploy'
+                }
+                timeout (time:3, unit: "DAYS") {
+                input 'Deploy to production?\n [Build_Number]: $BUILD_NUMBER\n [Job_Name]: $JOB_NAME'
+                }
+                milestone(1)
+            }
+            post {
+                always {
+                    script {
+                        echo 'ran prompt for approval'
+                    }
+                }
+                success {
+                    script {
+                        echo 'prompt for approval success'
+                    }
+                }
+                failure {
+                    script {
+                        echo 'prompt for approval failure'
+                    }
+                }
+            }
+        }
+
+        // when branch is develop deploy to dev, deployments to dev do not require approval.
+        stage('Deploy-To-Dev') {
+            when {
+                branch 'develop'
+            }
+            steps {
+                script {
+                    echo 'running deploy to dev'
+                }
+                
+                withCredentials([usernamePassword(credentialsId: 'DOCKER_CREDS', passwordVariable: 'DOCKER_HUB_PWD', usernameVariable: 'DOCKER_HUB_USER')]) {
+                    sh 'docker login -u $DOCKER_HUB_USER -p $DOCKER_HUB_PWD'
+                }
+                
+                //SSH with Username and ssh Key
+                withCredentials([sshUserPrivateKey(credentialsId: 'skarpatwo-ssh-login', keyFileVariable: 'KEY', usernameVariable: 'USERNAME', passphraseVariable: 'PASSPHRASE' )]) {
+                    //username $USERNAME
+                    //password $PASSPHRASE
+                    script {
+                        sh "ssh -o StrickHostKeyChecking=no -i ${env.key} $USERNAME@${env.prod_ip} \"docker pull ${HUB_USER}/${APP_NAME2}:${SHORT_COMMIT_ID}\""
+                        try {
+                            sh "ssh -o StrictHostKeyChecking=no -i ${env.key} $USERNAME@${env.prod_ip} \"docker stop prod-${APP_NAME2}\""
+                            sh "ssh -o StrictHostKeyChecking=no -i ${env.key} $USERNAME@${env.prod_ip} \"docker rm prod-${APP_NAME2}\""
+                        } catch (err) {
+                            echo: 'caught error: $err'
+                        }
+                        sh "ssh -o StrictHostKeyChecking=no -i ${env.key} $USERNAME@${env.prod_ip} \"docker run -d -t -i --restart unless-stopped --name prod-${APP_NAME2} -p ${PORT}:${PORT} ${HUB_USER}/${APP_NAME2}:${SHORT_COMMIT_ID}\""
+                    }
+                }                
+
+                /*withCredentials([usernamePassword(credentialsId: 'SKARPALINUXTWO_CREDS', passwordVariable: 'USERPASS', usernameVariable: 'USERNAME')]) {
+                    script {
+                        sh "sshpass -p '$USERPASS' -v ssh -o StrictHostKeyChecking=no $USERNAME@${env.prod_ip} \"docker pull ${HUB_USER}/${APP_NAME2}:${SHORT_COMMIT_ID}\""
+                        try {
+                            sh "sshpass -p '$USERPASS' -v ssh -o StrictHostKeyChecking=no $USERNAME@${env.prod_ip} \"docker stop dev-${APP_NAME2}\""
+                            sh "sshpass -p '$USERPASS' -v ssh -o StrictHostKeyChecking=no $USERNAME@${env.prod_ip} \"docker rm dev-${APP_NAME2}\""
+                        } catch (err) {
+                            echo: 'caught error: $err'
+                        }
+                        sh "sshpass -p '$USERPASS' -v ssh -o StrictHostKeyChecking=no $USERNAME@${env.prod_ip} \"docker run -d -t -i --restart unless-stopped --name dev-${APP_NAME2} -p ${PORT}:${PORT} ${HUB_USER}/${APP_NAME2}:${SHORT_COMMIT_ID}\""
+                    }
+                }*/
+            }
+            post {
+                always {
+                    script {
+                        echo 'ran deploy to dev'
+                    }
+                }
+                success {
+                    slackSend (
+                        color: '#26ff00', //green
+                        message: "[APP]: ${APP_NAME2.toUpperCase()}\n [DEV-DEPLOY]:Success\n [JOB]:'${env.JOB_NAME}\n [Build No]:${env.BUILD_NUMBER}'"
+                    )
+                }
+                failure {
+                    slackSend (
+                        color: '#ff002a', //red
+                        message: "[APP]: ${APP_NAME2.toUpperCase()}\n [DEV-DEPLOY]:Success\n [JOB]:'${env.JOB_NAME}\n [Build No]:${env.BUILD_NUMBER}'"
+                    )
+                }
+            }
+        }
+
+        // when branch is master deploy to master where approved.
+        stage('Deploy-To-Production') {
+            when {
+                branch 'master'
+            }
+            steps {
+                input 'Deploy to Production?'
+                milestone(1)
+
+                /*script {
+                }*/
+                //DOCKER CREDS
+                withCredentials([usernamePassword(credentialsId: 'DOCKER_CREDS', passwordVariable: 'DOCKER_HUB_PWD', usernameVariable: 'DOCKER_HUB_USER')]) {
+                    sh 'docker login -u $DOCKER_HUB_USER -p $DOCKER_HUB_PWD'
+                }
+                //SSH with Username and ssh Key
+                withCredentials([sshUserPrivateKey(credentialsId: 'skarpatwo-ssh-login', keyFileVariable: 'KEY', usernameVariable: 'USERNAME', passphraseVariable: 'PASSPHRASE' )]) {
+                    //username $USERNAME
+                    //password $PASSPHRASE
+                    script {
+                        sh "ssh -o StrickHostKeyChecking=no -i ${env.key} $USERNAME@${env.prod_ip} \"docker pull ${HUB_USER}/${APP_NAME2}:${SHORT_COMMIT_ID}\""
+                        try {
+                            sh "ssh -o StrictHostKeyChecking=no -i ${env.key} $USERNAME@${env.prod_ip} \"docker stop prod-${APP_NAME2}\""
+                            sh "ssh -o StrictHostKeyChecking=no -i ${env.key} $USERNAME@${env.prod_ip} \"docker rm prod-${APP_NAME2}\""
+                        } catch (err) {
+                            echo: 'caught error: $err'
+                        }
+                        sh "ssh -o StrictHostKeyChecking=no -i ${env.key} $USERNAME@${env.prod_ip} \"docker run -d -t -i --restart unless-stopped --name prod-${APP_NAME2} -p ${PORT}:${PORT} ${HUB_USER}/${APP_NAME2}:${SHORT_COMMIT_ID}\""
+                    }
+                }
+                // SSH with Username and password
+                /*withCredentials([usernamePassword(credentialsId: 'SKARPALINUXTWO_CREDS', passwordVariable: 'USERPASS', usernameVariable: 'USERNAME')]) {
+                    script {
+                        sh "sshpass -p '$USERPASS' -v ssh -o StrictHostKeyChecking=no $USERNAME@${env.prod_ip} \"docker pull ${HUB_USER}/${APP_NAME2}:${SHORT_COMMIT_ID}\""
+                        try {
+                            sh "sshpass -p '$USERPASS' -v ssh -o StrictHostKeyChecking=no $USERNAME@${env.prod_ip} \"docker stop prod-${APP_NAME2}\""
+                            sh "sshpass -p '$USERPASS' -v ssh -o StrictHostKeyChecking=no $USERNAME@${env.prod_ip} \"docker rm prod-${APP_NAME2}\""
+                        } catch (err) {
+                            echo: 'caught error: $err'
+                        }
+                        sh "sshpass -p '$USERPASS' -v ssh -o StrictHostKeyChecking=no $USERNAME@${env.prod_ip} \"docker run -d -t -i --restart unless-stopped --name prod-${APP_NAME2} -p ${PORT}:${PORT} ${HUB_USER}/${APP_NAME2}:${SHORT_COMMIT_ID}\""
+                    }
+                }*/
+            }
+            post {
+                always {
+                    script {
+                        echo 'running deploy to prod'
+                    }
+                }
+                success {
+                    slackSend (
+                        color: '#26ff00', //green
+                        message: "[APP]: ${APP_NAME2.toUpperCase()}\n [PROD-DEPLOY]:Success\n [JOB]:'${env.JOB_NAME}\n [Build No]:${env.BUILD_NUMBER}'"
+                    )
+                }
+                failure {
+                    slackSend (
+                        color: '#ff002a', //red
+                        message: "[APP]: ${APP_NAME2.toUpperCase()}\n [PROD-DEPLOY]:Success\n [JOB]:'${env.JOB_NAME}\n [Build No]:${env.BUILD_NUMBER}'"
+                    )
+                }
+            }
+        }
+              
+    }    
+}
