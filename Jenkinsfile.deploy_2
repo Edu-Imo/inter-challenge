@@ -1,0 +1,127 @@
+// Description: when triggered this pipeline will deploy the latest version of the inter-challenge image to the dev, stage or production env based on branch.
+
+pipeline {
+    agent any
+
+    environment {
+        CI = 'true'       
+        def APP2 = readJSON file: 'package.json'
+        def APP_NAME2 = "${APP2.name}"
+        def APP_VERSION2 = "${APP2.version}"       
+        //APP_NAME1 = $(cat package.json | grep name | head -1 | awk -F: '{ print $2 }' | sed 's/[\",]//g')
+        //APP_VERSION1 = $(cat package.json | grep version | head -1 | awk -F: '{ print $2 }' | sed 's/[\",]//g')
+        SHORT_COMMIT_ID = GIT_COMMIT.take(9)
+        HUB_USER = "qui3tst0rm"
+        REPO_NAME = "${APP2.NAME2}"
+        PORT = 3000
+    }
+
+    stages {
+
+        //if branch is master prompt for approval to deploy to prod environment
+        stage('confirm-prod-deploy') {
+            when {
+                branch 'master'
+            }
+            steps {
+                scripts {
+                    echo 'running prompt for approval prod deploy'
+                }
+
+                timeout  (time:3, unit: "DAYS") {
+                input 'Deploy to production?\n [Build_Number]: $BUILD_NUMBER\n [Job_Name]: $JOB_NAME'
+                }
+                milestone(1)                             
+            }
+        }
+
+        //deploy to prodcution
+        stage('deploy-to-prod') {
+            when {
+                branch 'master'
+            }
+            steps {
+                input 'Deploy to production?\n [Build_Number]: $BUILD_NUMBER\n [Job_Name]: $JOB_NAME'
+                milestone(1)
+
+                //SSH with username and ssh key
+                withCredentials([sshUserPrivateKey(credentialsId: 'ssh-user-login', keyFileVariable: 'KEY', usernameVariable: 'USERNAME', passphraseVariable: 'PASSPHRASE' )]) {
+                    script {
+                        sh "scp -o StrictHostKeyChecking=no -i ${env.KEY} *.yaml $USERNAME@${env.PROD_IP}:~/"
+                        try {
+                            sh """
+                            ssh -i ${env.KEY} $USERNAME@${env.PROD_IP} << EOF
+                            kubectl apply -f inter-app-deployment.yaml
+                            kubectl apply -f inter-app-service.yaml
+                            'EOF'
+                            """
+                        } catch (err) {
+                            echo: 'caught error: $err'
+                        }
+                    }
+                }
+
+                /*script {
+
+                }*/                
+            }
+        }
+
+        //deploy to dev
+        stage('deploy-to-dev') {
+            when {
+                branch 'develop'
+            }
+            steps {
+                //SSH with username and ssh key
+                withCredentials([sshUserPrivateKey(credentialsId: 'ssh-user-login', keyFileVariable: 'KEY', usernameVariable: 'USERNAME', passphraseVariable: 'PASSPHRASE' )]) {
+                    script {
+                        sh "scp -o StrictHostKeyChecking=no -i ${env.KEY} *.yaml $USERNAME@${env.DEV_IP}:~/"
+                        try {
+                            sh """
+                            ssh -i ${env.KEY} $USERNAME@${env.DEV_IP} << EOF
+                            kubectl apply -f inter-app-deployment.yaml
+                            kubectl apply -f inter-app-service.yaml
+                            'EOF'
+                            """
+                        } catch (err) {
+                            echo: 'caught error: $err'
+                        }
+                    }
+                }
+
+                /*script {
+
+                }*/                
+            }
+        }
+        //deploy to staging
+        stage('deploy-to-stage') {
+            when {
+                branch 'stage'
+            }
+            steps {
+                //SSH with username and ssh key
+                withCredentials([sshUserPrivateKey(credentialsId: 'ssh-user-login', keyFileVariable: 'KEY', usernameVariable: 'USERNAME', passphraseVariable: 'PASSPHRASE' )]) {
+                    script {
+                        sh "scp -o StrictHostKeyChecking=no -i ${env.KEY} *.yaml $USERNAME@${env.STAGE_IP}:~/"
+                        try {
+                            sh """
+                            ssh -i ${env.KEY} $USERNAME@${env.STAGE_IP} << EOF
+                            kubectl apply -f inter-app-deployment.yaml
+                            kubectl apply -f inter-app-service.yaml
+                            'EOF'
+                            """
+                        } catch (err) {
+                            echo: 'caught error: $err'
+                        }
+                    }
+                }
+
+                /*script {
+
+                }*/                
+            }
+        }               
+    }
+}

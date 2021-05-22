@@ -17,7 +17,7 @@ pipeline {
         CI = 'true'        
         def APP2 = readJSON file: 'package.json'
         def APP_NAME2 = "${APP2.name}"
-        //def APP_VERSION2 = "${APP2.version}"       
+        def APP_VERSION2 = "${APP2.version}"       
         //APP_NAME1 = $(cat package.json | grep name | head -1 | awk -F: '{ print $2 }' | sed 's/[\",]//g')
         //APP_VERSION1 = $(cat package.json | grep version | head -1 | awk -F: '{ print $2 }' | sed 's/[\",]//g')
         SHORT_COMMIT_ID = GIT_COMMIT.take(9)
@@ -71,7 +71,7 @@ pipeline {
                     echo 'slackSend run unit test'
                     sh '''
                     set +e
-                    cp /var/lib/jenkins/envFiles/syarpa/referral/dev/.env .
+                    cp .env .
                     npm test
                     set -e
                     '''

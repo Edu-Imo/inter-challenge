@@ -1,0 +1,19 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: inter-app-deployment
+spec:
+  selector:
+    matchLabels:
+      app: inter-app-project
+  replicas: 2 
+  template:
+    metadata:
+      labels:
+        app: inter-app-project
+    spec:
+      containers:
+      - name: inter-app-project
+        image: qui3tst0rm/inter-app:set_app_version
+        ports:
+        - containerPort: 3000
