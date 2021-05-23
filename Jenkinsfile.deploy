@@ -102,7 +102,7 @@ pipeline {
         //deploy to staging
         stage('deploy-to-stage') {
             when {
-                branch 'stage'
+                branch 'qa'
             }
             steps {
                 //SSH with username and ssh key
